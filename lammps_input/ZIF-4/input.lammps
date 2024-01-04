@@ -1,0 +1,84 @@
+variable taskid equal 2
+variable TempHi equal 1500
+variable Press equal 0
+variable rate equal round((${TempHi}-300)/(5)*4000) # units of K/ps
+
+units           metal
+boundary        p p p
+atom_style      atomic
+
+neighbor        1.0 bin
+
+read_data	ZIF4.data
+pair_style      deepmd ../CHNZn.pb        # Using a compressed version of DP model for better efficiency
+pair_coeff      * *
+
+thermo_style    custom step temp pe ke etotal press vol lx ly lz density spcpu
+thermo          1000
+
+timestep        0.00025
+
+velocity	all create 10 ${taskid} dist gaussian units box   
+
+fix	1 all npt temp 10 10 $(100*dt) iso 0 0 $(1000*dt)
+fix     2 all temp/berendsen 10 10 $(100*dt)
+
+run	30000
+unfix	1
+unfix 	2
+
+#### Heat to 300 K
+
+fix     1 all npt temp 10 300 $(100*dt) iso 0 0 $(1000*dt)
+run 	5000
+unfix	1
+
+#### Equilibrate structure
+
+fix     1 all npt temp 300 300 $(100*dt) iso 0 0 $(1000*dt)
+run 	50000
+unfix	1
+
+write_data      300K${taskid}.dat
+write_restart   300K${taskid}.rest
+
+#### Heat to 1500 K in NPT over 50 ps
+
+dump	1 all custom 1000 md_melt${taskid}.lammpstrj id type x y z
+fix	1 all npt temp 300 ${TempHi} $(100*dt) iso ${Press} ${Press} $(1000*dt)
+run	200000
+unfix	1
+undump	1
+
+fix	1 all npt temp ${TempHi} ${TempHi} $(100*dt) iso ${Press} ${Press} $(1000*dt)
+run	200000
+unfix	1
+
+write_data	melt${taskid}.dat
+write_restart	melt${taskid}.rest
+
+#### Cool to 300 K in NPT
+
+dump	1 all custom 1000 md_quench${taskid}.lammpstrj id type x y z
+fix	1 all npt temp ${TempHi} 300 $(100*dt) iso ${Press} ${Press} $(1000*dt)
+run	${rate}
+unfix	1
+undump	1
+
+#### Relax structure at 300K in NPT
+
+fix	1 all npt temp 300 300 $(100*dt) iso 0 0 $(1000*dt)
+run	50000
+unfix	1
+
+write_data	glass${taskid}.dat
+write_restart	glass${taskid}.rest
+
+#### Extract trajectory for analysis
+
+dump	1 all custom 1000 mdstat${taskid}.lammpstrj id type x y z
+fix     1 all nvt temp 300 300 $(100*dt)
+run 	100000
+unfix	1
+undump	1
+
